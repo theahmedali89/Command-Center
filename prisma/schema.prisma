@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ActorType {
+  USER
+  AUTOMATION
+  SYSTEM
+  API
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  NOT_CONFIGURED
+  AUTH_REQUIRED
+  APPROVAL_REQUIRED
+  TOKEN_EXPIRED
+  RECONNECT_REQUIRED
+  BLOCKED
+  DISCONNECTED
+}
+
+enum PublishStatus {
+  DRAFT
+  READY
+  SCHEDULED
+  PROCESSING
+  PUBLISHED
+  PARTIALLY_PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY
+  SCHEDULED
+  PROCESSING
+  PUBLISHED
+  PARTIALLY_PUBLISHED
+  FAILED
+}
+
+model User {
+  id           String         @id @default(cuid())
+  email        String         @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  websites     Website[]
+  socialAccounts SocialAccount[]
+  campaigns    ContentCampaign[]
+  mediaAssets  MediaAsset[]
+  auditLogs    AuditLog[]
+  settings     UserSettings?
+  agentApiKeys AgentApiKey[]
+}
+
+model Website {
+  id                  String           @id @default(cuid())
+  userId              String
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  url                 String
+  wpUsername          String
+  encryptedAppPassword String          @db.Text
+  status              ConnectionStatus @default(NOT_CONFIGURED)
+  lastVerifiedAt      DateTime?
+  lastError           String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([userId])
+}
+
+model SocialAccount {
+  id                   String           @id @default(cuid())
+  userId               String
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform             String
+  externalAccountId    String?
+  accountName          String?
+  encryptedAccessToken String?          @db.Text
+  encryptedRefreshToken String?         @db.Text
+  tokenExpiresAt       DateTime?
+  scopes               String?
+  connectionStatus     ConnectionStatus @default(NOT_CONFIGURED)
+  lastVerifiedAt       DateTime?
+  lastError            String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  scheduledPosts       ScheduledPost[]
+
+  @@index([userId, platform])
+}
+
+model ContentCampaign {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic          String
+  context        String?         @db.Text
+  goal           String?
+  language       String          @default("en")
+  tone           String          @default("Friendly")
+  destinationUrl String?
+  status         CampaignStatus  @default(DRAFT)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  platformContents PlatformContent[]
+
+  @@index([userId, status])
+}
+
+model PlatformContent {
+  id             String        @id @default(cuid())
+  campaignId     String
+  campaign       ContentCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  platform       String
+  title          String?
+  hook           String?       @db.Text
+  caption        String?       @db.Text
+  description    String?       @db.Text
+  cta            String?
+  hashtags       String[]      @default([])
+  tags           String[]      @default([])
+  keywords       String[]      @default([])
+  videoIdea      String?       @db.Text
+  mediaAssetId   String?
+  mediaAsset     MediaAsset?   @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  version        Int           @default(1)
+  status         PublishStatus @default(DRAFT)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  scheduledPosts ScheduledPost[]
+
+  @@index([campaignId])
+}
+
+model MediaAsset {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  originalFilename String
+  storageProvider String   @default("r2")
+  storageKey      String
+  publicUrl       String?
+  mimeType        String
+  size            Int
+  width           Int?
+  height          Int?
+  duration        Float?
+  createdAt       DateTime @default(now())
+  platformContents PlatformContent[]
+
+  @@index([userId])
+}
+
+model ScheduledPost {
+  id                  String        @id @default(cuid())
+  platformContentId   String
+  platformContent     PlatformContent @relation(fields: [platformContentId], references: [id], onDelete: Cascade)
+  socialAccountId     String?
+  socialAccount       SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  websiteId           String?
+  scheduledAtUtc      DateTime
+  displayTimezone     String        @default("Asia/Karachi")
+  status              PublishStatus @default(SCHEDULED)
+  attemptCount        Int           @default(0)
+  lastAttemptAt       DateTime?
+  nextRetryAt         DateTime?
+  lastErrorCode       String?
+  lastSafeErrorMessage String?      @db.Text
+  publishedAt         DateTime?
+  externalPostId      String?
+  externalUrl         String?
+  idempotencyKey      String        @unique
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([status, scheduledAtUtc])
+}
+
+model AuditLog {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actorType    ActorType
+  actorId      String?
+  action       String
+  entityType   String?
+  entityId     String?
+  platform     String?
+  safeMetadata Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model UserSettings {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandName        String?
+  websiteUrl       String?
+  brandDescription String?  @db.Text
+  defaultTone      String   @default("Friendly")
+  defaultLanguage  String   @default("en")
+  defaultCta       String?
+  defaultTimezone  String   @default("Asia/Karachi")
+  approvalRequired Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model AgentApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String    @default("Milo automation")
+  keyHash    String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([userId])
+}
