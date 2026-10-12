@@ -12,13 +12,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireApiUser } from "@/lib/session";
 
 
-type OAuthPlatform = "facebook" | "youtube" | "pinterest" | "tiktok";
+type OAuthPlatform = "facebook" | "youtube" | "pinterest" | "tiktok" | "linkedin";
 
 const OAUTH_PLATFORMS: readonly OAuthPlatform[] = [
   "facebook",
   "youtube",
   "pinterest",
   "tiktok",
+  "linkedin",
 ];
 
 interface PlatformOAuthConfig {
@@ -81,6 +82,14 @@ function getPlatformConfig(platform: OAuthPlatform): PlatformOAuthConfig {
         // approval before these scopes can publish.
         scope: "user.info.basic,video.upload",
       };
+    case "linkedin":
+      return {
+        label: "LinkedIn",
+        clientIdEnv: "LINKEDIN_CLIENT_ID",
+        clientId: process.env.LINKEDIN_CLIENT_ID,
+        authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
+        scope: "openid profile w_member_social",
+      };
   }
 }
 
@@ -107,7 +116,7 @@ export async function GET(
         ok: false,
         code: "INVALID_PLATFORM",
         message:
-          "Unsupported platform for OAuth. Supported: facebook, youtube, pinterest, tiktok.",
+          "Unsupported platform for OAuth. Supported: facebook, youtube, pinterest, tiktok, linkedin.",
       },
       { status: 400 },
     );

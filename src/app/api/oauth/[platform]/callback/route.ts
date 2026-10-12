@@ -17,13 +17,14 @@ import { encryptSecret } from "@/lib/crypto";
 import { ConnectionStatus } from "@/types";
 
 
-type OAuthPlatform = "facebook" | "youtube" | "pinterest" | "tiktok";
+type OAuthPlatform = "facebook" | "youtube" | "pinterest" | "tiktok" | "linkedin";
 
 const OAUTH_PLATFORMS: readonly OAuthPlatform[] = [
   "facebook",
   "youtube",
   "pinterest",
   "tiktok",
+  "linkedin",
 ];
 
 interface TokenResult {
@@ -182,6 +183,35 @@ async function exchangeCode(
       return {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
+        expiresIn: data.expires_in,
+        scopes: data.scope,
+        raw: data,
+      };
+    }
+    case "linkedin": {
+      const clientId = process.env.LINKEDIN_CLIENT_ID;
+      const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+      if (!clientId || !clientSecret) throw new Error("NOT_CONFIGURED");
+      const res = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+        }),
+      });
+      if (!res.ok) throw new Error("TOKEN_EXCHANGE_FAILED");
+      const data = (await res.json()) as {
+        access_token?: string;
+        expires_in?: number;
+        scope?: string;
+      };
+      if (!data.access_token) throw new Error("TOKEN_EXCHANGE_FAILED");
+      return {
+        accessToken: data.access_token,
         expiresIn: data.expires_in,
         scopes: data.scope,
         raw: data,
