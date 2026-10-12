@@ -14,6 +14,26 @@ function createClient(): PrismaClient {
   });
 }
 
-export const db = globalForPrisma.prisma ?? createClient();
+function getClient(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createClient();
+  }
+  return globalForPrisma.prisma;
+}
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+/**
+ * Lazy Prisma client.
+ *
+ * The client is created on FIRST USE, not at import time. This matters
+ * because Next.js evaluates page modules during `next build` (data
+ * collection / prerender analysis) — creating the Pool at import would
+ * throw when env vars aren't available yet in that phase. Queries only
+ * ever run at request time, where env vars are guaranteed.
+ */
+export const db: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getClient();
+    const value = (client as unknown as Record<PropertyKey, unknown>)[prop];
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
