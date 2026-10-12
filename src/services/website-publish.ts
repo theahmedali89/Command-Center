@@ -60,7 +60,7 @@ interface DownloadedImage {
  * Server-side download of the featured image: http(s) only, image/* only,
  * hard 5 MB cap enforced while streaming (never buffers an unbounded body).
  */
-async function downloadImage(rawUrl: string): Promise<DownloadedImage> {
+export async function downloadImage(rawUrl: string): Promise<DownloadedImage> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);

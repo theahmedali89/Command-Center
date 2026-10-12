@@ -19,7 +19,8 @@ export type WordPressErrorCode =
   | "NOT_CONFIGURED"
   | "NETWORK_ERROR"
   | "INVALID_RESPONSE"
-  | "REQUEST_FAILED";
+  | "REQUEST_FAILED"
+  | "EMPTY_UPDATE";
 
 /** Error thrown for WordPress API failures. Messages are safe to surface. */
 export class WordPressError extends Error {
@@ -272,11 +273,78 @@ export class WordPressClient {
     input: CreatePostInput,
     includeMeta: boolean
   ): Promise<CreatePostResult> {
-    const body: Record<string, unknown> = {
-      title: input.title,
-      content: input.content,
-      status: input.status ?? "draft",
+    const body = this.buildPostBody(input, includeMeta);
+    const created = await this.postJson<{ id?: unknown; link?: unknown }>(
+      "/wp-json/wp/v2/posts",
+      body.body
+    );
+    if (typeof created.id !== "number") {
+      throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a post id.");
+    }
+    return {
+      ok: true,
+      id: created.id,
+      url: typeof created.link === "string" ? created.link : undefined,
+      yoastApplied: body.metaSent,
     };
+  }
+
+  /**
+   * Update an existing post. Same input shape as createPost; only provided
+   * fields are sent. Returns the updated post id/url.
+   */
+  async updatePost(
+    postId: number,
+    input: Partial<CreatePostInput> & { yoastSupported: boolean }
+  ): Promise<CreatePostResult> {
+    const withMeta = input.yoastSupported;
+    try {
+      return await this.attemptUpdatePost(postId, input, withMeta);
+    } catch (err) {
+      if (withMeta && err instanceof WordPressError && this.isMetaRejection(err)) {
+        try {
+          return await this.attemptUpdatePost(postId, input, false);
+        } catch (retryErr) {
+          return this.toFailedResult(retryErr);
+        }
+      }
+      return this.toFailedResult(err);
+    }
+  }
+
+  private async attemptUpdatePost(
+    postId: number,
+    input: Partial<CreatePostInput> & { yoastSupported: boolean },
+    includeMeta: boolean
+  ): Promise<CreatePostResult> {
+    const body = this.buildPostBody(input, includeMeta);
+    if (Object.keys(body.body).length === 0) {
+      throw new WordPressError("EMPTY_UPDATE", "No fields to update.");
+    }
+    const updated = await this.postJson<{ id?: unknown; link?: unknown }>(
+      `/wp-json/wp/v2/posts/${postId}`,
+      body.body
+    );
+    if (typeof updated.id !== "number") {
+      throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a post id.");
+    }
+    return {
+      ok: true,
+      id: updated.id,
+      url: typeof updated.link === "string" ? updated.link : undefined,
+      yoastApplied: body.metaSent,
+    };
+  }
+
+  /** Shared body builder for create/update. */
+  private buildPostBody(
+    input: Partial<CreatePostInput>,
+    includeMeta: boolean
+  ): { body: Record<string, unknown>; metaSent: boolean } {
+    const body: Record<string, unknown> = {};
+    if (input.title !== undefined) body["title"] = input.title;
+    if (input.content !== undefined) body["content"] = input.content;
+    if (input.status !== undefined) body["status"] = input.status;
     if (input.slug) body["slug"] = input.slug;
     if (input.categoryIds && input.categoryIds.length > 0) body["categories"] = input.categoryIds;
     if (input.tagIds && input.tagIds.length > 0) body["tags"] = input.tagIds;
@@ -287,20 +355,7 @@ export class WordPressClient {
     if (input.yoastDescription) meta["_yoast_wpseo_metadesc"] = input.yoastDescription;
     const metaSent = includeMeta && Object.keys(meta).length > 0;
     if (metaSent) body["meta"] = meta;
-
-    const created = await this.postJson<{ id?: unknown; link?: unknown }>(
-      "/wp-json/wp/v2/posts",
-      body
-    );
-    if (typeof created.id !== "number") {
-      throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a post id.");
-    }
-    return {
-      ok: true,
-      id: created.id,
-      url: typeof created.link === "string" ? created.link : undefined,
-      yoastApplied: metaSent,
-    };
+    return { body, metaSent };
   }
 
   /** True when WP rejected the request specifically because of the meta param. */
