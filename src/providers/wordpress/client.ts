@@ -312,6 +312,22 @@ export class WordPressClient {
     }
   }
 
+  /** Move a post to trash. Returns ok:false with code on failure. */
+  async deletePost(postId: number): Promise<{ ok: boolean; code?: string; message?: string }> {
+    try {
+      const res = await this.doFetch(`/wp-json/wp/v2/posts/${postId}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw await this.mappedHttpError(res, `/wp-json/wp/v2/posts/${postId}`);
+      }
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof WordPressError) {
+        return { ok: false, code: err.code, message: err.message };
+      }
+      return { ok: false, code: "REQUEST_FAILED", message: "WordPress post deletion failed." };
+    }
+  }
+
   private async attemptUpdatePost(
     postId: number,
     input: Partial<CreatePostInput> & { yoastSupported: boolean },

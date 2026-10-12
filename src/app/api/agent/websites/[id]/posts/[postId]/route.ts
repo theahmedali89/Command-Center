@@ -161,3 +161,67 @@ export async function PUT(
     );
   }
 }
+
+/**
+ * DELETE /api/agent/websites/[id]/posts/[postId]
+ * Agent-authenticated deletion (moves to trash).
+ */
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string; postId: string }> },
+): Promise<Response> {
+  const identity = await verifyAgentKey(req);
+  if (!identity) {
+    return agentUnauthorized();
+  }
+  const { id, postId } = await params;
+  const wpPostId = Number(postId);
+  if (!Number.isInteger(wpPostId) || wpPostId <= 0) {
+    return Response.json(
+      { ok: false, code: "INVALID_POST_ID", message: "Invalid postId." },
+      { status: 400 },
+    );
+  }
+
+  const website = await db.website.findFirst({
+    where: { id, userId: identity.userId },
+  });
+  if (!website) {
+    return Response.json(
+      { ok: false, code: "WEBSITE_NOT_FOUND", message: "Website not found." },
+      { status: 404 },
+    );
+  }
+
+  const client = new WordPressClient({
+    baseUrl: website.url,
+    username: website.wpUsername,
+    appPassword: decryptSecret(website.encryptedAppPassword),
+  });
+
+  try {
+    const deleted = await client.deletePost(wpPostId);
+    if (!deleted.ok) {
+      return Response.json(
+        { ok: false, code: deleted.code ?? "DELETE_FAILED", message: deleted.message ?? "Delete failed." },
+        { status: 502 },
+      );
+    }
+    await audit({
+      userId: identity.userId,
+      actorType: "AUTOMATION",
+      actorId: "milo-runtime",
+      action: AuditActions.POST_DELETED,
+      entityType: "Website",
+      entityId: id,
+      platform: "wordpress",
+      safeMetadata: { postId: wpPostId },
+    });
+    return Response.json({ ok: true, code: "OK", message: "Post moved to trash.", postId: wpPostId });
+  } catch (err) {
+    return Response.json(
+      { ok: false, code: "DELETE_FAILED", message: err instanceof Error ? err.message : "Delete failed." },
+      { status: 502 },
+    );
+  }
+}
