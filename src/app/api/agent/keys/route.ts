@@ -102,3 +102,43 @@ export async function POST(req: Request): Promise<Response> {
     },
   });
 }
+
+/**
+ * DELETE /api/agent/keys?id=<keyId> — revoke an agent API key.
+ * The key stops working immediately.
+ */
+export async function DELETE(req: Request): Promise<Response> {
+  const user = await apiUser();
+  if (user instanceof Response) return user;
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) {
+    return Response.json(
+      { ok: false, code: "INVALID_INPUT", message: "Key id is required." },
+      { status: 400 },
+    );
+  }
+
+  const existing = await db.agentApiKey.findFirst({
+    where: { id, userId: user.id },
+  });
+  if (!existing) {
+    return Response.json(
+      { ok: false, code: "NOT_FOUND", message: "API key not found." },
+      { status: 404 },
+    );
+  }
+
+  await db.agentApiKey.delete({ where: { id } });
+
+  await audit({
+    userId: user.id,
+    actorType: "USER",
+    actorId: user.id,
+    action: "AGENT_KEY_REVOKED",
+    entityType: "AgentApiKey",
+    entityId: id,
+  });
+
+  return Response.json({ ok: true, data: { id } });
+}

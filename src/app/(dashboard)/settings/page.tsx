@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/session";
 import { db } from "@/lib/db";
 import { getIntegrationStatuses } from "@/app/api/settings/integrations/route";
 import SettingsForm from "./SettingsForm";
+import { AgentKeysManager } from "./AgentKeysManager";
 
 export default async function SettingsPage(): Promise<React.ReactElement> {
   const user = await requireUser();
@@ -32,6 +33,9 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
         }}
         integrations={integrations}
       />
+      <div className="mt-6">
+        <AgentKeysManager />
+      </div>
     </div>
   );
 }
