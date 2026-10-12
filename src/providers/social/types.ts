@@ -52,6 +52,10 @@ export interface PublishInput {
   hashtags?: string[];
   link?: string;
   mediaUrls?: string[];
+  /** Decrypted platform access token (provided by the publishing engine). */
+  accessToken?: string;
+  /** Pinterest: destination board id (the account's default board). */
+  boardId?: string;
 }
 
 /** Result of a validation step: ok plus human-readable issues. */

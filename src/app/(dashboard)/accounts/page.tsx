@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Skeleton } from "@/components/Skeleton";
 import { Badge } from "@/components/Badge";
 import { useToast } from "@/components/Toast";
+import { PinterestBoardPicker } from "./PinterestBoardPicker";
 import type { ApiResponse, Capability, ConnectionStatus, PlatformId } from "@/types";
 
 interface AccountRow {
@@ -157,6 +158,10 @@ export default function AccountsPage() {
 
                 {row.lastError && (
                   <p className="text-sm text-red-600 dark:text-red-400">{row.lastError}</p>
+                )}
+
+                {row.platform === "pinterest" && row.connected && (
+                  <PinterestBoardPicker />
                 )}
 
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">

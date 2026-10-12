@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { audit, AuditActions } from "@/lib/audit";
-import { decryptSecret } from "@/lib/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { WordPressClient } from "@/providers/wordpress/client";
 import { getSocialProvider } from "@/providers/social";
 import {
@@ -39,7 +39,7 @@ export async function executePublish(
   const post = await db.scheduledPost.findUnique({
     where: { id: opts.scheduledPostId },
     include: {
-      platformContent: { include: { campaign: true } },
+      platformContent: { include: { campaign: true, mediaAsset: true } },
       socialAccount: true,
     },
   });
@@ -94,10 +94,14 @@ export async function executePublish(
         ? await publishToWordPress(website, content)
         : permanentError("Website not found for this scheduled post.");
     } else if (post.socialAccountId && post.socialAccount) {
-      result = await publishToSocial(post.socialAccount, {
-        ...content,
-        link: content.campaign.destinationUrl,
-      });
+      result = await publishToSocial(
+        post.socialAccount,
+        {
+          ...content,
+          link: content.campaign.destinationUrl,
+          mediaUrl: content.mediaAsset?.publicUrl ?? null,
+        },
+      );
     } else {
       result = permanentError(
         "Scheduled post has neither a website nor a social account attached.",
@@ -230,6 +234,7 @@ type ContentShape = {
   description: string | null;
   hashtags: string[];
   link?: string | null;
+  mediaUrl?: string | null;
 };
 
 async function publishToWordPress(
@@ -293,7 +298,16 @@ async function publishToWordPress(
   };
 }
 
-type SocialTarget = { platform: string; connectionStatus: string };
+type SocialTarget = {
+  id: string;
+  userId: string;
+  platform: string;
+  connectionStatus: string;
+  encryptedAccessToken?: string | null;
+  encryptedRefreshToken?: string | null;
+  tokenExpiresAt?: Date | null;
+  boardId?: string | null;
+};
 
 async function publishToSocial(
   account: SocialTarget,
@@ -314,11 +328,86 @@ async function publishToSocial(
     return permanentError(`Unsupported platform: ${account.platform}.`);
   }
 
-  return provider.publish({
+  // Resolve a usable access token: refresh when expired (5-minute buffer).
+  let accessToken: string | undefined;
+  if (account.encryptedAccessToken) {
+    try {
+      accessToken = decryptSecret(account.encryptedAccessToken);
+    } catch {
+      return {
+        ok: false,
+        code: "AUTH_REQUIRED",
+        message: "Stored social token could not be decrypted — reconnect the account.",
+      };
+    }
+    const expired =
+      account.tokenExpiresAt &&
+      account.tokenExpiresAt.getTime() < Date.now() + 5 * 60 * 1000;
+    if (expired) {
+      try {
+        const refreshed = await provider.refreshCredentials({
+          encryptedAccessToken: account.encryptedAccessToken,
+          encryptedRefreshToken: account.encryptedRefreshToken,
+        });
+        accessToken = refreshed.accessToken;
+        await db.socialAccount.update({
+          where: { id: account.id },
+          data: {
+            encryptedAccessToken: encryptSecret(refreshed.accessToken),
+            encryptedRefreshToken: refreshed.refreshToken
+              ? encryptSecret(refreshed.refreshToken)
+              : undefined,
+            tokenExpiresAt: refreshed.expiresAt ?? null,
+            lastVerifiedAt: new Date(),
+            lastError: null,
+          },
+        });
+        await audit({
+          userId: account.userId,
+          actorType: "AUTOMATION",
+          action: AuditActions.TOKEN_REFRESHED,
+          entityType: "SocialAccount",
+          entityId: account.id,
+          platform: account.platform,
+        });
+      } catch {
+        await db.socialAccount.update({
+          where: { id: account.id },
+          data: {
+            connectionStatus: "AUTH_REQUIRED",
+            lastError: "Token refresh failed — reconnect the account.",
+          },
+        });
+        return {
+          ok: false,
+          code: "AUTH_REQUIRED",
+          message: "Social token expired and refresh failed — reconnect the account.",
+        };
+      }
+    }
+  }
+
+  const result = await provider.publish({
     title: content.title ?? undefined,
     caption: content.caption ?? undefined,
     description: content.description ?? undefined,
     hashtags: content.hashtags,
     link: content.link ?? undefined,
+    accessToken,
+    boardId: account.boardId ?? undefined,
+    mediaUrls: content.mediaUrl ? [content.mediaUrl] : undefined,
   });
+
+  // A 401 from the provider means the token died mid-flight: mark the
+  // account so the user reconnects instead of burning retries.
+  if (result.code === "AUTH_REQUIRED") {
+    await db.socialAccount.update({
+      where: { id: account.id },
+      data: {
+        connectionStatus: "AUTH_REQUIRED",
+        lastError: result.message,
+      },
+    });
+  }
+  return result;
 }

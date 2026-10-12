@@ -92,6 +92,9 @@ model SocialAccount {
   connectionStatus     ConnectionStatus @default(NOT_CONFIGURED)
   lastVerifiedAt       DateTime?
   lastError            String?
+  // Pinterest: default board for pin publishing (chosen in the UI).
+  boardId              String?
+  boardName            String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
   scheduledPosts       ScheduledPost[]
