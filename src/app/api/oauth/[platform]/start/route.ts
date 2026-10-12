@@ -137,7 +137,7 @@ export async function GET(
 
   // The public app URL registered as the OAuth redirect base in each dev app.
   // Falls back to the request origin when APP_URL is not set.
-  const appUrl = process.env.APP_URL ?? request.nextUrl.origin;
+  const appUrl = (process.env.APP_URL ?? request.nextUrl.origin).replace(/\/$/, "");
   const redirectUri = `${appUrl}/api/oauth/${platform}/callback`;
 
   const state = randomBytes(32).toString("hex");

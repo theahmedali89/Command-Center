@@ -268,7 +268,7 @@ export async function GET(
     return fail(request, "invalid_state");
   }
 
-  const appUrl = process.env.APP_URL ?? request.nextUrl.origin;
+  const appUrl = (process.env.APP_URL ?? request.nextUrl.origin).replace(/\/$/, "");
   const redirectUri = `${appUrl}/api/oauth/${oauthPlatform}/callback`;
 
   let token: TokenResult;
