@@ -26,7 +26,8 @@ async function isAuthenticated(request: NextRequest): Promise<boolean> {
       token,
       new TextEncoder().encode(secret),
     );
-    return typeof payload.sub === "string";
+    // Session tokens carry `userId` (see createSession in lib/session.ts).
+    return typeof payload.userId === "string";
   } catch {
     return false;
   }
