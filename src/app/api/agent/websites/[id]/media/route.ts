@@ -10,6 +10,7 @@ import { audit, AuditActions } from "@/lib/audit";
  *
  * Auth: Authorization: Bearer <agent-api-key>
  * Body: multipart/form-data with `file` field (image/*, max 5 MB)
+ *       and optional `alt` field (alt text for the attachment, max 500 chars)
  * Returns: { ok, data: { id, url } }
  */
 export async function POST(
@@ -69,8 +70,20 @@ export async function POST(
     appPassword: decryptSecret(website.encryptedAppPassword),
   });
 
+  // Optional alt text for the media attachment (SEO + accessibility).
+  const altRaw = form.get("alt");
+  const altText = typeof altRaw === "string" ? altRaw.trim().slice(0, 500) : "";
+
   try {
     const uploaded = await client.uploadMedia(bytes, file.name, file.type);
+    // Best-effort: set alt text. Don't fail the upload if this fails.
+    if (altText) {
+      try {
+        await client.setMediaAltText(uploaded.id, altText);
+      } catch {
+        // Alt text is non-blocking; upload already succeeded.
+      }
+    }
     await audit({
       userId: identity.userId,
       actorType: "AUTOMATION",

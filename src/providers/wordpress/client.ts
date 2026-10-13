@@ -249,6 +249,21 @@ export class WordPressClient {
   }
 
   /**
+   * Set the alt text on an uploaded media attachment.
+   * Best-effort: throws WordPressError on failure so callers can decide
+   * whether to treat it as blocking.
+   */
+  async setMediaAltText(mediaId: number, altText: string): Promise<void> {
+    const res = await this.doFetch(`/wp-json/wp/v2/media/${mediaId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ alt_text: altText }),
+    });
+    if (!res.ok) throw await this.mappedHttpError(res, `/wp-json/wp/v2/media/${mediaId}`);
+    await res.body?.cancel().catch(() => undefined);
+  }
+
+  /**
    * Create a post. Yoast meta is sent ONLY when yoastSupported is true; if
    * WordPress rejects the meta fields, it retries once without meta and
    * reports yoastApplied=false. Never throws — failures come back as ok:false.
