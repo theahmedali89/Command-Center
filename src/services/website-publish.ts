@@ -197,13 +197,28 @@ export async function publishToWebsite(opts: {
     return fail("NOT_CONFIGURED", "The WordPress REST API is not available on this site.", 502);
   }
 
-  // 2. Category (find-or-create).
+  // 2. Category (find-or-create). Best-effort: if category assignment fails,
+  // log and continue without category rather than failing the entire publish.
   let categoryIds: number[] | undefined;
   if (input.category) {
     try {
       categoryIds = [await client.ensureCategory(input.category)];
     } catch (err) {
-      return fail(codeOf(err), messageOf(err), 502);
+      // Non-blocking: category assignment failed, continue without it.
+      // The post is more important than the category.
+      await audit({
+        userId,
+        actorType,
+        actorId,
+        action: AuditActions.POST_FAILED,
+        entityType: "Website",
+        entityId: websiteId,
+        platform: "wordpress",
+        safeMetadata: {
+          code: "CATEGORY_SKIPPED",
+          message: `Category "${input.category}" could not be assigned: ${messageOf(err).slice(0, 200)}. Post will publish without category.`,
+        },
+      });
     }
   }
 
