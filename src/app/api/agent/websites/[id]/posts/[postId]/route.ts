@@ -11,6 +11,7 @@ const updateSchema = z.object({
   category: z.string().trim().max(120).optional(),
   tags: z.array(z.string().trim().max(60)).max(20).optional(),
   featuredMediaUrl: z.string().trim().max(2000).optional(),
+  featuredMediaAlt: z.string().trim().max(500).optional(),
   yoastTitle: z.string().trim().max(200).optional(),
   yoastDescription: z.string().trim().max(400).optional(),
 });
@@ -22,7 +23,7 @@ type UpdateInput = z.infer<typeof updateSchema>;
  * Agent-authenticated update of an existing WordPress post.
  *
  * Auth: Authorization: Bearer <agent-api-key>
- * Body: { title?, html?, category?, tags?, featuredMediaUrl?, yoastTitle?, yoastDescription? }
+ * Body: { title?, html?, category?, tags?, featuredMediaUrl?, featuredMediaAlt?, yoastTitle?, yoastDescription? }
  * Only provided fields are updated. Slug/status/date are never changed.
  */
 export async function PUT(
@@ -111,6 +112,10 @@ export async function PUT(
       const image = await downloadImage(input.featuredMediaUrl);
       const uploaded = await client.uploadMedia(image.bytes, image.filename, image.mimeType);
       featuredMediaId = uploaded.id;
+      // Set alt text on featured image (Ahmed's standing order: every image MUST have alt text)
+      if (input.featuredMediaAlt) {
+        await client.setMediaAltText(uploaded.id, input.featuredMediaAlt);
+      }
     }
 
     const result = await client.updatePost(wpPostId, {

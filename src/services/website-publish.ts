@@ -18,6 +18,7 @@ export const websitePublishSchema = z.object({
   category: z.string().trim().min(1).max(200).optional(),
   tags: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
   featuredMediaUrl: z.string().trim().max(2000).optional(),
+  featuredMediaAlt: z.string().trim().max(500).optional(),
   yoastTitle: z.string().trim().max(200).optional(),
   yoastDescription: z.string().trim().max(500).optional(),
 });
@@ -242,6 +243,10 @@ export async function publishToWebsite(opts: {
       const image = await downloadImage(input.featuredMediaUrl);
       const uploaded = await client.uploadMedia(image.bytes, image.filename, image.mimeType);
       featuredMediaId = uploaded.id;
+      // Set alt text on featured image (Ahmed's standing order: every image MUST have alt text)
+      if (input.featuredMediaAlt) {
+        await client.setMediaAltText(uploaded.id, input.featuredMediaAlt);
+      }
     } catch (err) {
       if (err instanceof MediaDownloadError) return fail(err.code, err.message, err.status);
       return fail(codeOf(err), messageOf(err), 502);
