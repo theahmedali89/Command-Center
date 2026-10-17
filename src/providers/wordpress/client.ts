@@ -50,9 +50,12 @@ export interface VerifyResult {
   message?: string;
 }
 
+/** Tri-state Yoast capability: the draft-based probe can be inconclusive. */
+export type YoastMetaState = "supported" | "unsupported" | "unknown";
+
 export interface CapabilityInfo {
   rest: boolean;
-  yoastMetaWritable: boolean;
+  yoastMeta: YoastMetaState;
 }
 
 export interface CreatePostInput {
@@ -65,8 +68,12 @@ export interface CreatePostInput {
   featuredMediaId?: number;
   yoastTitle?: string;
   yoastDescription?: string;
-  /** From detectCapabilities(). Meta is only sent when true. */
-  yoastSupported: boolean;
+  /**
+   * From detectCapabilities(). Meta is sent when "supported" or "unknown"
+   * (unknown = probe inconclusive; a WP-side rejection triggers the existing
+   * safe retry without meta). Never sent when "unsupported".
+   */
+  yoastMeta: YoastMetaState;
 }
 
 export interface CreatePostResult {
@@ -132,28 +139,32 @@ export class WordPressClient {
     const index = await this.getJson<unknown>("/wp-json/");
     const namespaces = (index as { namespaces?: unknown } | null)?.namespaces;
     const rest = Array.isArray(namespaces) && (namespaces as unknown[]).includes("wp/v2");
-    if (!rest) return { rest: false, yoastMetaWritable: false };
-    const yoastMetaWritable = await this.probeYoastMeta();
-    return { rest: true, yoastMetaWritable };
+    if (!rest) return { rest: false, yoastMeta: "unsupported" };
+    const yoastMeta = await this.probeYoastMeta();
+    return { rest: true, yoastMeta };
   }
 
   /**
    * Best-effort, read-only Yoast probe. Yoast SEO registers its
    * `_yoast_wpseo_*` fields with show_in_rest, which makes WordPress include a
-   * `meta` object in edit-context post responses. No drafts on the site means
-   * the probe is inconclusive → false (never assume). createPost() still
-   * retries once without meta if the server rejects it.
+   * `meta` object in edit-context post responses. The probe is tri-state:
+   * "supported" when a draft exposes a `meta` object, "unsupported" when
+   * drafts exist but none expose it, and "unknown" when the probe is
+   * inconclusive (fetch failure or zero drafts — e.g. sites that publish
+   * directly and never keep drafts). Callers attempt meta on "unknown";
+   * createPost()/updatePost() still retry once without meta if the server
+   * rejects it.
    */
-  private async probeYoastMeta(): Promise<boolean> {
+  private async probeYoastMeta(): Promise<YoastMetaState> {
     let type: unknown;
     try {
       type = await this.getJson<unknown>("/wp-json/wp/v2/types/post");
     } catch {
-      return false;
+      return "unknown";
     }
     const t = type as Record<string, unknown> | null;
-    if (!t || typeof t !== "object") return false;
-    if (t["slug"] !== "post" && t["rest_base"] !== "posts") return false;
+    if (!t || typeof t !== "object") return "unknown";
+    if (t["slug"] !== "post" && t["rest_base"] !== "posts") return "unsupported";
 
     let drafts: unknown;
     try {
@@ -161,11 +172,11 @@ export class WordPressClient {
         "/wp-json/wp/v2/posts?per_page=1&status=draft&context=edit"
       );
     } catch {
-      return false;
+      return "unknown";
     }
-    if (!Array.isArray(drafts) || drafts.length === 0) return false;
+    if (!Array.isArray(drafts) || drafts.length === 0) return "unknown";
     const meta = (drafts[0] as Record<string, unknown>)["meta"];
-    return !!meta && typeof meta === "object";
+    return !!meta && typeof meta === "object" ? "supported" : "unsupported";
   }
 
   /** Find a category by case-insensitive exact name match, or create it. */
@@ -264,12 +275,14 @@ export class WordPressClient {
   }
 
   /**
-   * Create a post. Yoast meta is sent ONLY when yoastSupported is true; if
-   * WordPress rejects the meta fields, it retries once without meta and
-   * reports yoastApplied=false. Never throws — failures come back as ok:false.
+   * Create a post. Yoast meta is attempted when yoastMeta is "supported" or
+   * "unknown" (probe inconclusive); if WordPress rejects the meta fields, it
+   * retries once without meta and reports yoastApplied=false. A successful
+   * meta send is verified by reading the post back. Never throws — failures
+   * come back as ok:false.
    */
   async createPost(input: CreatePostInput): Promise<CreatePostResult> {
-    const withMeta = input.yoastSupported;
+    const withMeta = input.yoastMeta !== "unsupported";
     try {
       return await this.attemptCreatePost(input, withMeta);
     } catch (err) {
@@ -296,11 +309,15 @@ export class WordPressClient {
     if (typeof created.id !== "number") {
       throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a post id.");
     }
+    let yoastApplied = body.metaSent;
+    if (body.metaSent && input.yoastTitle) {
+      yoastApplied = await this.verifyYoastApplied(created.id, input.yoastTitle, input.yoastDescription);
+    }
     return {
       ok: true,
       id: created.id,
       url: typeof created.link === "string" ? created.link : undefined,
-      yoastApplied: body.metaSent,
+      yoastApplied,
     };
   }
 
@@ -310,9 +327,9 @@ export class WordPressClient {
    */
   async updatePost(
     postId: number,
-    input: Partial<CreatePostInput> & { yoastSupported: boolean }
+    input: Partial<CreatePostInput> & { yoastMeta: YoastMetaState }
   ): Promise<CreatePostResult> {
-    const withMeta = input.yoastSupported;
+    const withMeta = input.yoastMeta !== "unsupported";
     try {
       return await this.attemptUpdatePost(postId, input, withMeta);
     } catch (err) {
@@ -345,7 +362,7 @@ export class WordPressClient {
 
   private async attemptUpdatePost(
     postId: number,
-    input: Partial<CreatePostInput> & { yoastSupported: boolean },
+    input: Partial<CreatePostInput> & { yoastMeta: YoastMetaState },
     includeMeta: boolean
   ): Promise<CreatePostResult> {
     const body = this.buildPostBody(input, includeMeta);
@@ -359,12 +376,43 @@ export class WordPressClient {
     if (typeof updated.id !== "number") {
       throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a post id.");
     }
+    let yoastApplied = body.metaSent;
+    if (body.metaSent && input.yoastTitle) {
+      yoastApplied = await this.verifyYoastApplied(updated.id, input.yoastTitle, input.yoastDescription);
+    }
     return {
       ok: true,
       id: updated.id,
       url: typeof updated.link === "string" ? updated.link : undefined,
-      yoastApplied: body.metaSent,
+      yoastApplied,
     };
+  }
+
+  /** Raw meta-only update used by the verifier; never verifies (no recursion). */
+  private async sendMetaUpdate(postId: number, yoastTitle: string, yoastDescription?: string): Promise<void> {
+    const meta: Record<string, string> = { _yoast_wpseo_title: yoastTitle };
+    if (yoastDescription) meta["_yoast_wpseo_metadesc"] = yoastDescription;
+    await this.postJson<unknown>(`/wp-json/wp/v2/posts/${postId}`, { meta });
+  }
+
+  /**
+   * Read back the post in edit context and confirm the Yoast title landed.
+   * One corrective meta update + re-verify on mismatch. Never throws: any
+   * verification failure returns false (publish itself is unaffected).
+   */
+  private async verifyYoastApplied(postId: number, yoastTitle: string, yoastDescription?: string): Promise<boolean> {
+    const matches = async (): Promise<boolean> => {
+      try {
+        const post = await this.getJson<Record<string, unknown>>(`/wp-json/wp/v2/posts/${postId}?context=edit`);
+        const meta = post?.["meta"];
+        return !!meta && typeof meta === "object" &&
+          (meta as Record<string, unknown>)["_yoast_wpseo_title"] === yoastTitle;
+      } catch { return false; }
+    };
+    if (await matches()) return true;
+    try { await this.sendMetaUpdate(postId, yoastTitle, yoastDescription); }
+    catch { return false; }
+    return matches();
   }
 
   /** Shared body builder for create/update. */

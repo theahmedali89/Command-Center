@@ -121,7 +121,7 @@ export async function PUT(
       featuredMediaId,
       yoastTitle: input.yoastTitle,
       yoastDescription: input.yoastDescription,
-      yoastSupported: capabilities.yoastMetaWritable,
+      yoastMeta: capabilities.yoastMeta,
     });
 
     if (!result.ok) {

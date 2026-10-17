@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { audit, AuditActions } from "@/lib/audit";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import { WordPressClient } from "@/providers/wordpress/client";
+import { WordPressClient, type CapabilityInfo } from "@/providers/wordpress/client";
 import { getSocialProvider } from "@/providers/social";
 import {
   ActorType,
@@ -254,7 +254,7 @@ async function publishToWordPress(
     appPassword,
   });
 
-  let caps: { rest: boolean; yoastMetaWritable: boolean };
+  let caps: CapabilityInfo;
   try {
     caps = await client.detectCapabilities();
   } catch (err) {
@@ -279,7 +279,7 @@ async function publishToWordPress(
     status: "publish",
     yoastTitle: content.title ?? undefined,
     yoastDescription: content.description ?? undefined,
-    yoastSupported: caps.yoastMetaWritable,
+    yoastMeta: caps.yoastMeta,
   });
 
   if (!created.ok) {

@@ -116,7 +116,7 @@ describe("WordPressClient", () => {
     });
   });
 
-  it("detectCapabilities() detects REST without Yoast when no draft exposes meta", async () => {
+  it("detectCapabilities() reports unsupported when drafts exist but none expose meta", async () => {
     const { fetchImpl } = makeFetch((url) => {
       if (url === "https://example.com/wp-json/") {
         return jsonResponse({ namespaces: ["wp/v2", "oembed/1.0"] });
@@ -130,7 +130,24 @@ describe("WordPressClient", () => {
       throw new Error(`unexpected url ${url}`);
     });
     const caps = await clientFor(fetchImpl).detectCapabilities();
-    assert.deepEqual(caps, { rest: true, yoastMetaWritable: false });
+    assert.deepEqual(caps, { rest: true, yoastMeta: "unsupported" });
+  });
+
+  it("detectCapabilities() reports unknown when the site has zero drafts", async () => {
+    const { fetchImpl } = makeFetch((url) => {
+      if (url === "https://example.com/wp-json/") {
+        return jsonResponse({ namespaces: ["wp/v2"] });
+      }
+      if (url === "https://example.com/wp-json/wp/v2/types/post") {
+        return jsonResponse({ slug: "post", rest_base: "posts" });
+      }
+      if (url.startsWith("https://example.com/wp-json/wp/v2/posts?")) {
+        return jsonResponse([]); // inconclusive — not "unsupported"
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const caps = await clientFor(fetchImpl).detectCapabilities();
+    assert.deepEqual(caps, { rest: true, yoastMeta: "unknown" });
   });
 
   it("detectCapabilities() detects Yoast when a draft exposes a meta object", async () => {
@@ -144,7 +161,7 @@ describe("WordPressClient", () => {
       return jsonResponse([{ id: 1, meta: { _yoast_wpseo_title: "t" } }]);
     });
     const caps = await clientFor(fetchImpl).detectCapabilities();
-    assert.deepEqual(caps, { rest: true, yoastMetaWritable: true });
+    assert.deepEqual(caps, { rest: true, yoastMeta: "supported" });
   });
 
   it("ensureCategory() returns the id of a case-insensitive exact match without POSTing", async () => {
@@ -194,7 +211,7 @@ describe("WordPressClient", () => {
     assert.ok(!headers["Content-Disposition"].includes('"evil'));
   });
 
-  it("createPost() strips Yoast meta when yoastSupported is false", async () => {
+  it("createPost() strips Yoast meta when yoastMeta is unsupported", async () => {
     const { fetchImpl, calls } = makeFetch(() =>
       jsonResponse({ id: 11, link: "https://example.com/hello" }, 201)
     );
@@ -205,7 +222,7 @@ describe("WordPressClient", () => {
       categoryIds: [5],
       yoastTitle: "SEO title",
       yoastDescription: "SEO desc",
-      yoastSupported: false,
+      yoastMeta: "unsupported",
     });
     assert.equal(result.ok, true);
     assert.equal(result.id, 11);
@@ -214,6 +231,65 @@ describe("WordPressClient", () => {
     const sent = await bodyOf(calls[0]);
     assert.ok(!("meta" in sent), "meta must not be sent when unsupported");
     assert.deepEqual(sent["categories"], [5]);
+  });
+
+  it("createPost() sends meta and verifies it when yoastMeta is unknown", async () => {
+    const { fetchImpl, calls } = makeFetch((url, init) => {
+      if (init?.method === "GET") {
+        assert.equal(url, "https://example.com/wp-json/wp/v2/posts/20?context=edit");
+        return jsonResponse({ id: 20, meta: { _yoast_wpseo_title: "SEO" } });
+      }
+      return jsonResponse({ id: 20, link: "https://example.com/verify" }, 201);
+    });
+    const result = await clientFor(fetchImpl).createPost({
+      title: "Verify",
+      content: "<p>x</p>",
+      status: "publish",
+      yoastTitle: "SEO",
+      yoastDescription: "SEO desc",
+      yoastMeta: "unknown",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.yoastApplied, true);
+    assert.equal(calls.length, 2);
+    const sent = await bodyOf(calls[0]);
+    assert.deepEqual(sent["meta"], {
+      _yoast_wpseo_title: "SEO",
+      _yoast_wpseo_metadesc: "SEO desc",
+    });
+  });
+
+  it("createPost() corrects and re-verifies when the first read-back misses", async () => {
+    let verifyCalls = 0;
+    const { fetchImpl, calls } = makeFetch((url, init) => {
+      if (url === "https://example.com/wp-json/wp/v2/posts") {
+        return jsonResponse({ id: 21, link: "https://example.com/correct" }, 201);
+      }
+      if (url === "https://example.com/wp-json/wp/v2/posts/21?context=edit") {
+        verifyCalls += 1;
+        // First read-back: title missing (WP dropped it); second: present.
+        return verifyCalls === 1
+          ? jsonResponse({ id: 21, meta: {} })
+          : jsonResponse({ id: 21, meta: { _yoast_wpseo_title: "SEO" } });
+      }
+      if (url === "https://example.com/wp-json/wp/v2/posts/21") {
+        assert.equal(init?.method, "POST");
+        return jsonResponse({ id: 21 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const result = await clientFor(fetchImpl).createPost({
+      title: "Correct",
+      content: "<p>x</p>",
+      status: "publish",
+      yoastTitle: "SEO",
+      yoastMeta: "supported",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.yoastApplied, true);
+    const corrective = calls.find((c) => c.url === "https://example.com/wp-json/wp/v2/posts/21");
+    assert.ok(corrective, "expected one corrective meta-only update");
+    assert.deepEqual(await bodyOf(corrective), { meta: { _yoast_wpseo_title: "SEO" } });
   });
 
   it("createPost() retries once without meta when WP rejects the meta param", async () => {
@@ -234,7 +310,7 @@ describe("WordPressClient", () => {
       content: "<p>x</p>",
       status: "draft",
       yoastTitle: "SEO",
-      yoastSupported: true,
+      yoastMeta: "supported",
     });
     assert.equal(result.ok, true);
     assert.equal(result.id, 12);
@@ -251,7 +327,7 @@ describe("WordPressClient", () => {
     const result = await clientFor(fetchImpl).createPost({
       title: "Nope",
       content: "<p>x</p>",
-      yoastSupported: true,
+      yoastMeta: "supported",
     });
     assert.equal(result.ok, false);
     assert.equal(result.code, "BLOCKED");

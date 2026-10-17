@@ -7,7 +7,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { decryptSecret } from "@/lib/crypto";
 import { audit, AuditActions } from "@/lib/audit";
-import { WordPressClient, WordPressError } from "@/providers/wordpress/client";
+import { WordPressClient, WordPressError, type CapabilityInfo } from "@/providers/wordpress/client";
 import type { ActorType } from "@/types";
 
 export const websitePublishSchema = z.object({
@@ -187,7 +187,7 @@ export async function publishToWebsite(opts: {
   });
 
   // 1. Capabilities — never assume REST or Yoast writability.
-  let capabilities: { rest: boolean; yoastMetaWritable: boolean };
+  let capabilities: CapabilityInfo;
   try {
     capabilities = await client.detectCapabilities();
   } catch (err) {
@@ -259,7 +259,7 @@ export async function publishToWebsite(opts: {
     featuredMediaId,
     yoastTitle: input.yoastTitle,
     yoastDescription: input.yoastDescription,
-    yoastSupported: capabilities.yoastMetaWritable,
+    yoastMeta: capabilities.yoastMeta,
   });
   if (!created.ok) {
     return fail(
