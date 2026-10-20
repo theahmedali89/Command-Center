@@ -190,6 +190,49 @@ describe("WordPressClient", () => {
     assert.deepEqual(await bodyOf(calls[1]), { name: "News" });
   });
 
+  it("ensureCategory() falls back to the closest existing category when creation is forbidden", async () => {
+    const { fetchImpl, calls } = makeFetch((url, init) => {
+      if (url === "https://example.com/wp-json/wp/v2/categories?per_page=100") {
+        return jsonResponse([
+          { id: 2, name: "Love, Family, Friendship & Emotions" },
+          { id: 7, name: "Famous People Quotes" },
+        ]);
+      }
+      if (init?.method === "GET") return jsonResponse([]);
+      assert.equal(url, "https://example.com/wp-json/wp/v2/categories");
+      return jsonResponse(
+        { code: "rest_forbidden", message: "Sorry, you are not allowed to do that." },
+        403
+      );
+    });
+    const id = await clientFor(fetchImpl).ensureCategory("People Quotes");
+    assert.equal(id, 7); // "people" + "quotes" both match
+    assert.equal(calls.length, 3);
+  });
+
+  it("ensureCategory() rethrows when creation is forbidden and nothing overlaps", async () => {
+    const { fetchImpl } = makeFetch((url, init) => {
+      if (url === "https://example.com/wp-json/wp/v2/categories?per_page=100") {
+        return jsonResponse([{ id: 2, name: "Love, Family, Friendship & Emotions" }]);
+      }
+      if (init?.method === "GET") return jsonResponse([]);
+      return jsonResponse(
+        { code: "rest_forbidden", message: "Sorry, you are not allowed to do that." },
+        403
+      );
+    });
+    await assert.rejects(() => clientFor(fetchImpl).ensureCategory("Celebrity & Author Quotes"), WordPressError);
+  });
+
+  it("ensureCategory() rethrows non-permission creation failures without fallback", async () => {
+    const { fetchImpl, calls } = makeFetch((url, init) => {
+      if (init?.method === "GET") return jsonResponse([]);
+      return jsonResponse({ code: "rest_invalid", message: "Bad request." }, 400);
+    });
+    await assert.rejects(() => clientFor(fetchImpl).ensureCategory("News"), WordPressError);
+    assert.equal(calls.length, 2); // no fallback list fetch on 400
+  });
+
   it("uploadMedia() posts binary data with the right headers", async () => {
     const { fetchImpl, calls } = makeFetch((url, init) => {
       assert.equal(url, "https://example.com/wp-json/wp/v2/media");

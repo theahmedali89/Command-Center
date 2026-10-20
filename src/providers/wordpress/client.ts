@@ -179,7 +179,11 @@ export class WordPressClient {
     return !!meta && typeof meta === "object" ? "supported" : "unsupported";
   }
 
-  /** Find a category by case-insensitive exact name match, or create it. */
+  /** Find a category by case-insensitive exact name match, or create it.
+   *
+   * If the API user may not create categories (e.g. an author-role user),
+   * fall back to the closest existing category by word overlap instead of
+   * failing — callers stay non-blocking like the publish path. */
   async ensureCategory(name: string): Promise<number> {
     const clean = name.trim();
     if (!clean) throw new WordPressError("REQUEST_FAILED", "Category name must not be empty.");
@@ -192,13 +196,60 @@ export class WordPressClient {
       );
       if (match && typeof match.id === "number") return match.id;
     }
-    const created = await this.postJson<{ id?: unknown }>("/wp-json/wp/v2/categories", {
-      name: clean,
-    });
-    if (typeof created.id !== "number") {
-      throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a category id.");
+    try {
+      const created = await this.postJson<{ id?: unknown }>("/wp-json/wp/v2/categories", {
+        name: clean,
+      });
+      if (typeof created.id !== "number") {
+        throw new WordPressError("INVALID_RESPONSE", "WordPress did not return a category id.");
+      }
+      return created.id;
+    } catch (err) {
+      if (!(err instanceof WordPressError) || (err.status !== 401 && err.status !== 403)) {
+        throw err;
+      }
+      // This API user cannot create categories (403 rest_forbidden for author
+      // role). Fall back to the closest existing category rather than
+      // publishing uncategorized.
+      const all = await this.getJson<Array<{ id?: unknown; name?: unknown }>>(
+        "/wp-json/wp/v2/categories?per_page=100"
+      );
+      const fallback = this.closestCategory(clean, Array.isArray(all) ? all : []);
+      if (fallback !== undefined) return fallback;
+      throw err;
     }
-    return created.id;
+  }
+
+  /** Best word-overlap match to `name` among existing categories.
+   * Returns undefined when nothing overlaps enough to trust. */
+  private closestCategory(
+    name: string,
+    categories: Array<{ id?: unknown; name?: unknown }>
+  ): number | undefined {
+    const wanted = name
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    if (wanted.length === 0) return undefined;
+    let best: number | undefined;
+    let bestOverlap = 0;
+    for (const c of categories) {
+      if (typeof c.id !== "number" || typeof c.name !== "string") continue;
+      const have = new Set(
+        c.name
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter(Boolean)
+      );
+      let overlap = 0;
+      for (const w of wanted) if (have.has(w)) overlap++;
+      // Need at least half the words to match, and beat the current best.
+      if (overlap > bestOverlap && overlap >= wanted.length / 2) {
+        bestOverlap = overlap;
+        best = c.id;
+      }
+    }
+    return best;
   }
 
   /** Find a tag by case-insensitive exact name match, or create it. */

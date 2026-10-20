@@ -92,10 +92,29 @@ export async function PUT(
   try {
     const capabilities = await client.detectCapabilities();
 
-    // Resolve category/tags to IDs (same logic as publish).
+    // Resolve category/tags to IDs. Category is best-effort (same as publish):
+    // a category failure must never 502 an otherwise good update.
     let categoryIds: number[] | undefined;
     if (input.category) {
-      categoryIds = [await client.ensureCategory(input.category)];
+      try {
+        categoryIds = [await client.ensureCategory(input.category)];
+      } catch (err) {
+        await audit({
+          userId: identity.userId,
+          actorType: "AUTOMATION",
+          actorId: "milo-runtime",
+          action: AuditActions.POST_FAILED,
+          entityType: "Website",
+          entityId: id,
+          platform: "wordpress",
+          safeMetadata: {
+            code: "CATEGORY_SKIPPED",
+            message: `Category "${input.category}" could not be assigned: ${
+              err instanceof Error ? err.message : "Update failed."
+            }. Post will update without category change.`,
+          },
+        });
+      }
     }
     let tagIds: number[] | undefined;
     if (input.tags && input.tags.length > 0) {
