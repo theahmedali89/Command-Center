@@ -68,6 +68,7 @@ export interface CreatePostInput {
   featuredMediaId?: number;
   yoastTitle?: string;
   yoastDescription?: string;
+  yoastFocusKw?: string;
   /**
    * From detectCapabilities(). Meta is sent when "supported" or "unknown"
    * (unknown = probe inconclusive; a WP-side rejection triggers the existing
@@ -362,7 +363,7 @@ export class WordPressClient {
     }
     let yoastApplied = body.metaSent;
     if (body.metaSent && input.yoastTitle) {
-      yoastApplied = await this.verifyYoastApplied(created.id, input.yoastTitle, input.yoastDescription);
+      yoastApplied = await this.verifyYoastApplied(created.id, input.yoastTitle, input.yoastDescription, input.yoastFocusKw);
     }
     return {
       ok: true,
@@ -429,7 +430,7 @@ export class WordPressClient {
     }
     let yoastApplied = body.metaSent;
     if (body.metaSent && input.yoastTitle) {
-      yoastApplied = await this.verifyYoastApplied(updated.id, input.yoastTitle, input.yoastDescription);
+      yoastApplied = await this.verifyYoastApplied(updated.id, input.yoastTitle, input.yoastDescription, input.yoastFocusKw);
     }
     return {
       ok: true,
@@ -440,9 +441,10 @@ export class WordPressClient {
   }
 
   /** Raw meta-only update used by the verifier; never verifies (no recursion). */
-  private async sendMetaUpdate(postId: number, yoastTitle: string, yoastDescription?: string): Promise<void> {
+  private async sendMetaUpdate(postId: number, yoastTitle: string, yoastDescription?: string, yoastFocusKw?: string): Promise<void> {
     const meta: Record<string, string> = { _yoast_wpseo_title: yoastTitle };
     if (yoastDescription) meta["_yoast_wpseo_metadesc"] = yoastDescription;
+    if (yoastFocusKw) meta["_yoast_wpseo_focuskw"] = yoastFocusKw;
     await this.postJson<unknown>(`/wp-json/wp/v2/posts/${postId}`, { meta });
   }
 
@@ -451,7 +453,7 @@ export class WordPressClient {
    * One corrective meta update + re-verify on mismatch. Never throws: any
    * verification failure returns false (publish itself is unaffected).
    */
-  private async verifyYoastApplied(postId: number, yoastTitle: string, yoastDescription?: string): Promise<boolean> {
+  private async verifyYoastApplied(postId: number, yoastTitle: string, yoastDescription?: string, yoastFocusKw?: string): Promise<boolean> {
     const matches = async (): Promise<boolean> => {
       try {
         const post = await this.getJson<Record<string, unknown>>(`/wp-json/wp/v2/posts/${postId}?context=edit`);
@@ -461,7 +463,7 @@ export class WordPressClient {
       } catch { return false; }
     };
     if (await matches()) return true;
-    try { await this.sendMetaUpdate(postId, yoastTitle, yoastDescription); }
+    try { await this.sendMetaUpdate(postId, yoastTitle, yoastDescription, yoastFocusKw); }
     catch { return false; }
     return matches();
   }
@@ -483,6 +485,7 @@ export class WordPressClient {
     const meta: Record<string, string> = {};
     if (input.yoastTitle) meta["_yoast_wpseo_title"] = input.yoastTitle;
     if (input.yoastDescription) meta["_yoast_wpseo_metadesc"] = input.yoastDescription;
+    if (input.yoastFocusKw) meta["_yoast_wpseo_focuskw"] = input.yoastFocusKw;
     const metaSent = includeMeta && Object.keys(meta).length > 0;
     if (metaSent) body["meta"] = meta;
     return { body, metaSent };

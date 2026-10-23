@@ -14,6 +14,7 @@ const updateSchema = z.object({
   featuredMediaAlt: z.string().trim().max(500).optional(),
   yoastTitle: z.string().trim().max(200).optional(),
   yoastDescription: z.string().trim().max(400).optional(),
+  yoastFocusKw: z.string().trim().max(200).optional(),
 });
 
 type UpdateInput = z.infer<typeof updateSchema>;
@@ -23,7 +24,7 @@ type UpdateInput = z.infer<typeof updateSchema>;
  * Agent-authenticated update of an existing WordPress post.
  *
  * Auth: Authorization: Bearer <agent-api-key>
- * Body: { title?, html?, category?, tags?, featuredMediaUrl?, featuredMediaAlt?, yoastTitle?, yoastDescription? }
+ * Body: { title?, html?, category?, tags?, featuredMediaUrl?, featuredMediaAlt?, yoastTitle?, yoastDescription?, yoastFocusKw? }
  * Only provided fields are updated. Slug/status/date are never changed.
  */
 export async function PUT(
@@ -145,6 +146,7 @@ export async function PUT(
       featuredMediaId,
       yoastTitle: input.yoastTitle,
       yoastDescription: input.yoastDescription,
+      yoastFocusKw: input.yoastFocusKw,
       yoastMeta: capabilities.yoastMeta,
     });
 

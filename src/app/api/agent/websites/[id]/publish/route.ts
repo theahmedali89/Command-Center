@@ -13,7 +13,7 @@ import {
  *
  * Auth: Authorization: Bearer <agent-api-key>
  * Body: { title, html, slug?, status?, category?, tags?, featuredMediaUrl?,
- *         featuredMediaAlt?, yoastTitle?, yoastDescription? }
+ *         featuredMediaAlt?, yoastTitle?, yoastDescription?, yoastFocusKw? }
  */
 export async function POST(
   req: Request,

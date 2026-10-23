@@ -21,6 +21,7 @@ export const websitePublishSchema = z.object({
   featuredMediaAlt: z.string().trim().max(500).optional(),
   yoastTitle: z.string().trim().max(200).optional(),
   yoastDescription: z.string().trim().max(500).optional(),
+  yoastFocusKw: z.string().trim().max(200).optional(),
 });
 
 export type WebsitePublishInput = z.infer<typeof websitePublishSchema>;
@@ -264,6 +265,7 @@ export async function publishToWebsite(opts: {
     featuredMediaId,
     yoastTitle: input.yoastTitle,
     yoastDescription: input.yoastDescription,
+    yoastFocusKw: input.yoastFocusKw,
     yoastMeta: capabilities.yoastMeta,
   });
   if (!created.ok) {
